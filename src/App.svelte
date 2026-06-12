@@ -3,6 +3,8 @@
   import Emoji from "./lib/Emoji.svelte";
   import FontAwesome from "./lib/FontAwesome.svelte";
   import { fontAwesomeIconMap } from "./lib/font-awesome-icons";
+  import MaterialIcons from "./lib/MaterialIcons.svelte";
+  import { materialIconMap } from "./lib/material-icons";
 
   const fontAwesomeSolidFontUrl = new URL(
     "@fortawesome/fontawesome-free/webfonts/fa-solid-900.woff2",
@@ -14,6 +16,26 @@
   ).href;
   const fontAwesomeBrandsFontUrl = new URL(
     "@fortawesome/fontawesome-free/webfonts/fa-brands-400.woff2",
+    import.meta.url,
+  ).href;
+  const materialIconsFontUrl = new URL(
+    "@material-design-icons/font/material-icons.woff2",
+    import.meta.url,
+  ).href;
+  const materialIconsOutlinedFontUrl = new URL(
+    "@material-design-icons/font/material-icons-outlined.woff2",
+    import.meta.url,
+  ).href;
+  const materialIconsRoundFontUrl = new URL(
+    "@material-design-icons/font/material-icons-round.woff2",
+    import.meta.url,
+  ).href;
+  const materialIconsSharpFontUrl = new URL(
+    "@material-design-icons/font/material-icons-sharp.woff2",
+    import.meta.url,
+  ).href;
+  const materialIconsTwoToneFontUrl = new URL(
+    "@material-design-icons/font/material-icons-two-tone.woff2",
     import.meta.url,
   ).href;
 
@@ -43,6 +65,7 @@
   let text = $state(sessionStorage.getItem("text") || "");
   let show_emoji = $state(false);
   let show_font_awesome = $state(false);
+  let show_material_icons = $state(false);
   let textarea: HTMLTextAreaElement | undefined = $state();
 
   // Font size settings (loaded from localStorage)
@@ -92,6 +115,7 @@
     const match_italic = /(?<!_)_(?! )([^_]*?[^_ ]_)/g;
     const match_barcode = /\[\|.*?\|\]/g;
     const match_font_awesome = /\{fa:(?:(?:solid|regular|brands):)?[a-z0-9-]+\}/g;
+    const match_material_icons = /\{mi:(?:(?:filled|outlined|round|sharp|two-tone):)?[a-z0-9_]+\}/g;
     const match_big = /\^\^.*?\^\^/g;
     const match_small = /__.*?__/g;
 
@@ -117,6 +141,21 @@
       parsed.push({
         pos: start,
         type: "font awesome",
+        end,
+        icon: m[0].slice(4, -1),
+      });
+      clean_line =
+        clean_line.substring(0, start) +
+        "\n".repeat(m[0].length) +
+        clean_line.substring(end);
+    }
+
+    for (const m of clean_line.matchAll(match_material_icons)) {
+      const start = m.index;
+      const end = start + m[0].length;
+      parsed.push({
+        pos: start,
+        type: "material icon",
         end,
         icon: m[0].slice(4, -1),
       });
@@ -213,6 +252,18 @@
           if (icon) {
             ctx.font = `${icon.fontWeight} ${current_font.size}px "${icon.fontFamily}"`;
             render_fn(icon.unicode);
+          } else if (tag.end !== undefined) {
+            ctx.font = make_font(current_font);
+            render_fn(line.substring(tag.pos, tag.end));
+          }
+          pos = tag.end ?? tag.pos;
+          break;
+        }
+        case "material icon": {
+          const icon = tag.icon ? materialIconMap.get(tag.icon) : undefined;
+          if (icon) {
+            ctx.font = `${current_font.size}px "${icon.fontFamily}"`;
+            render_fn(icon.name);
           } else if (tag.end !== undefined) {
             ctx.font = make_font(current_font);
             render_fn(line.substring(tag.pos, tag.end));
@@ -477,6 +528,23 @@
         `url("${fontAwesomeBrandsFontUrl}")`,
         { weight: "400" },
       ),
+      new FontFace("Material Icons", `url("${materialIconsFontUrl}")`),
+      new FontFace(
+        "Material Icons Outlined",
+        `url("${materialIconsOutlinedFontUrl}")`,
+      ),
+      new FontFace(
+        "Material Icons Round",
+        `url("${materialIconsRoundFontUrl}")`,
+      ),
+      new FontFace(
+        "Material Icons Sharp",
+        `url("${materialIconsSharpFontUrl}")`,
+      ),
+      new FontFace(
+        "Material Icons Two Tone",
+        `url("${materialIconsTwoToneFontUrl}")`,
+      ),
     ];
     for (const font of fonts) document.fonts.add(font);
     Promise.all(fonts.map((font) => font.load())).then(() => {
@@ -608,6 +676,7 @@
         onclick={() => {
           show_emoji = !show_emoji;
           if (show_emoji) show_font_awesome = false;
+          if (show_emoji) show_material_icons = false;
         }}
       >
       </button>
@@ -618,6 +687,18 @@
         onclick={() => {
           show_font_awesome = !show_font_awesome;
           if (show_font_awesome) show_emoji = false;
+          if (show_font_awesome) show_material_icons = false;
+        }}
+      >
+      </button>
+      <button
+        class="material-icons"
+        aria-pressed={show_material_icons}
+        aria-label="Show Material Icon Selector"
+        onclick={() => {
+          show_material_icons = !show_material_icons;
+          if (show_material_icons) show_emoji = false;
+          if (show_material_icons) show_font_awesome = false;
         }}
       >
       </button>
@@ -627,6 +708,9 @@
     {/if}
     {#if show_font_awesome}
       <FontAwesome onselect={(token: string) => insertText(`{fa:${token}}`)} />
+    {/if}
+    {#if show_material_icons}
+      <MaterialIcons onselect={(token: string) => insertText(`{mi:${token}}`)} />
     {/if}
     <textarea
       bind:this={textarea}
@@ -864,6 +948,10 @@
   }
   .font-awesome {
     background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Ctext x='12' y='16' text-anchor='middle' font-family='sans-serif' font-size='11' font-weight='700' fill='black'%3EFA%3C/text%3E%3C/svg%3E")
+      no-repeat;
+  }
+  .material-icons {
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Ctext x='12' y='16' text-anchor='middle' font-family='sans-serif' font-size='11' font-weight='700' fill='black'%3EMI%3C/text%3E%3C/svg%3E")
       no-repeat;
   }
   .fnt-small {

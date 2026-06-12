@@ -9,3 +9,14 @@ declare module "virtual:font-awesome-icons" {
 
   export default icons;
 }
+
+declare module "virtual:material-icons" {
+  const icons: {
+    name: string;
+    label: string;
+    style: "filled" | "outlined" | "round" | "sharp" | "two-tone";
+    searchText: string;
+  }[];
+
+  export default icons;
+}

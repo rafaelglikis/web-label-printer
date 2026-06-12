@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { defineConfig, type Plugin } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
@@ -20,6 +20,7 @@ type IconMetadata = {
 }
 
 const fontAwesomeIconModuleId = 'virtual:font-awesome-icons'
+const materialIconModuleId = 'virtual:material-icons'
 
 function fontAwesomeIconData(): Plugin {
   return {
@@ -76,8 +77,45 @@ function fontAwesomeIconData(): Plugin {
   }
 }
 
+function materialIconData(): Plugin {
+  return {
+    name: 'material-icon-data',
+    resolveId(id) {
+      if (id === materialIconModuleId) return id
+    },
+    load(id) {
+      if (id !== materialIconModuleId) return
+
+      const packagePath = fileURLToPath(
+        new URL('./node_modules/@material-design-icons/svg/', import.meta.url),
+      )
+      const styles = ['filled', 'outlined', 'round', 'sharp', 'two-tone']
+      const icons = styles.flatMap((style) =>
+        readdirSync(`${packagePath}/${style}`)
+          .filter((file) => file.endsWith('.svg'))
+          .map((file) => {
+            const name = file.slice(0, -4)
+            const label = name
+              .split('_')
+              .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+              .join(' ')
+
+            return {
+              name,
+              label,
+              style,
+              searchText: `${name} ${label} ${style}`.toLowerCase(),
+            }
+          }),
+      )
+
+      return `export default ${JSON.stringify(icons)}`
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
   base: './',
-  plugins: [fontAwesomeIconData(), svelte()],
+  plugins: [fontAwesomeIconData(), materialIconData(), svelte()],
 })
