@@ -20,3 +20,14 @@ declare module "virtual:material-icons" {
 
   export default icons;
 }
+
+declare module "virtual:lucide-icons" {
+  const icons: {
+    name: string;
+    label: string;
+    node: [string, Record<string, string | number | undefined>][];
+    searchText: string;
+  }[];
+
+  export default icons;
+}

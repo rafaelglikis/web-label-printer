@@ -19,8 +19,11 @@ type IconMetadata = {
   }
 }
 
+type LucideIconNode = [string, Record<string, string | number | undefined>][]
+
 const fontAwesomeIconModuleId = 'virtual:font-awesome-icons'
 const materialIconModuleId = 'virtual:material-icons'
+const lucideIconModuleId = 'virtual:lucide-icons'
 
 function fontAwesomeIconData(): Plugin {
   return {
@@ -114,8 +117,48 @@ function materialIconData(): Plugin {
   }
 }
 
+function lucideIconData(): Plugin {
+  return {
+    name: 'lucide-icon-data',
+    resolveId(id) {
+      if (id === lucideIconModuleId) return id
+    },
+    load(id) {
+      if (id !== lucideIconModuleId) return
+
+      const iconsPath = fileURLToPath(
+        new URL('./node_modules/lucide/dist/esm/icons/', import.meta.url),
+      )
+      const icons = readdirSync(iconsPath)
+        .filter((file) => file.endsWith('.mjs'))
+        .map((file) => {
+          const name = file.slice(0, -4)
+          const source = readFileSync(`${iconsPath}/${file}`, 'utf8')
+          const match = source.match(/const\s+\w+\s*=\s*(\[[\s\S]*?\]);\s*export/)
+          if (!match) throw new Error(`Could not parse Lucide icon: ${file}`)
+
+          const node = Function(`"use strict"; return (${match[1]})`)() as LucideIconNode
+          const label = name
+            .split('-')
+            .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+            .join(' ')
+
+          return {
+            name,
+            label,
+            node,
+            searchText: `${name} ${label}`.toLowerCase(),
+          }
+        })
+        .sort((a, b) => a.label.localeCompare(b.label))
+
+      return `export default ${JSON.stringify(icons)}`
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
   base: './',
-  plugins: [fontAwesomeIconData(), materialIconData(), svelte()],
+  plugins: [fontAwesomeIconData(), materialIconData(), lucideIconData(), svelte()],
 })

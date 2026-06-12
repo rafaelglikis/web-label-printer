@@ -3,6 +3,8 @@
   import Emoji from "./lib/Emoji.svelte";
   import FontAwesome from "./lib/FontAwesome.svelte";
   import { fontAwesomeIconMap } from "./lib/font-awesome-icons";
+  import LucideIcons from "./lib/LucideIcons.svelte";
+  import { lucideIconMap, type LucideIcon } from "./lib/lucide-icons";
   import MaterialIcons from "./lib/MaterialIcons.svelte";
   import { materialIconMap } from "./lib/material-icons";
 
@@ -66,6 +68,7 @@
   let show_emoji = $state(false);
   let show_font_awesome = $state(false);
   let show_material_icons = $state(false);
+  let show_lucide_icons = $state(false);
   let textarea: HTMLTextAreaElement | undefined = $state();
 
   // Font size settings (loaded from localStorage)
@@ -101,7 +104,7 @@
     ctx: CanvasContext,
     line: string,
     size: number,
-    render_fn: (str: string) => void,
+    render_fn: (str: string, lucideIcon?: LucideIcon, size?: number) => void,
   ) {
     type ParsedTag = {
       pos: number;
@@ -116,6 +119,7 @@
     const match_barcode = /\[\|.*?\|\]/g;
     const match_font_awesome = /\{fa:(?:(?:solid|regular|brands):)?[a-z0-9-]+\}/g;
     const match_material_icons = /\{mi:(?:(?:filled|outlined|round|sharp|two-tone):)?[a-z0-9_]+\}/g;
+    const match_lucide_icons = /\{lu:[a-z0-9-]+\}/g;
     const match_big = /\^\^.*?\^\^/g;
     const match_small = /__.*?__/g;
 
@@ -156,6 +160,21 @@
       parsed.push({
         pos: start,
         type: "material icon",
+        end,
+        icon: m[0].slice(4, -1),
+      });
+      clean_line =
+        clean_line.substring(0, start) +
+        "\n".repeat(m[0].length) +
+        clean_line.substring(end);
+    }
+
+    for (const m of clean_line.matchAll(match_lucide_icons)) {
+      const start = m.index;
+      const end = start + m[0].length;
+      parsed.push({
+        pos: start,
+        type: "lucide icon",
         end,
         icon: m[0].slice(4, -1),
       });
@@ -271,6 +290,17 @@
           pos = tag.end ?? tag.pos;
           break;
         }
+        case "lucide icon": {
+          const icon = tag.icon ? lucideIconMap.get(tag.icon) : undefined;
+          if (icon) {
+            render_fn("", icon, current_font.size);
+          } else if (tag.end !== undefined) {
+            ctx.font = make_font(current_font);
+            render_fn(line.substring(tag.pos, tag.end));
+          }
+          pos = tag.end ?? tag.pos;
+          break;
+        }
       }
     }
   }
@@ -285,9 +315,24 @@
     var left = 0;
     var ascent = 0;
     var descent = 0;
-    var m: TextMetrics | undefined;
-    renderLine(ctx, line, size, (str) => {
-      m = ctx.measureText(str);
+    let lastRightAdjustment = 0;
+    renderLine(ctx, line, size, (str, lucideIcon, iconSize = size) => {
+      if (lucideIcon) {
+        if (first) {
+          ascent = iconSize;
+          descent = 0;
+          left = 0;
+          right = iconSize;
+          first = false;
+        } else {
+          ascent = Math.max(ascent, iconSize);
+          right += iconSize;
+        }
+        lastRightAdjustment = 0;
+        return;
+      }
+
+      const m = ctx.measureText(str);
       if (first) {
         ascent = m.actualBoundingBoxAscent;
         descent = m.actualBoundingBoxDescent;
@@ -299,11 +344,93 @@
         descent = Math.max(descent, m.actualBoundingBoxDescent);
         right += m.width;
       }
+      lastRightAdjustment = m.actualBoundingBoxRight - m.width;
     });
-    if (m !== undefined) {
-      right += m.actualBoundingBoxRight - m.width;
-    }
+    right += lastRightAdjustment;
     return { right, left, ascent, descent };
+  }
+
+  function drawLucideIcon(
+    ctx: CanvasContext,
+    icon: LucideIcon,
+    x: number,
+    baseline: number,
+    size: number,
+  ) {
+    const n = (value: string | number | undefined, fallback = 0) =>
+      value === undefined ? fallback : Number(value);
+    const points = (value: string | number | undefined) =>
+      String(value ?? "")
+        .trim()
+        .split(/\s+/)
+        .map((point) => point.split(",").map(Number))
+        .filter((point) => point.length === 2 && point.every(Number.isFinite));
+
+    ctx.save();
+    ctx.translate(x, baseline - size);
+    ctx.scale(size / 24, size / 24);
+    ctx.fillStyle = "transparent";
+    ctx.strokeStyle = "#000";
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    for (const [tag, attrs] of icon.node) {
+      ctx.beginPath();
+      switch (tag) {
+        case "path":
+          if (attrs.d !== undefined) ctx.stroke(new Path2D(String(attrs.d)));
+          break;
+        case "line":
+          ctx.moveTo(n(attrs.x1), n(attrs.y1));
+          ctx.lineTo(n(attrs.x2), n(attrs.y2));
+          ctx.stroke();
+          break;
+        case "circle":
+          ctx.arc(n(attrs.cx), n(attrs.cy), n(attrs.r), 0, Math.PI * 2);
+          ctx.stroke();
+          break;
+        case "ellipse":
+          ctx.ellipse(
+            n(attrs.cx),
+            n(attrs.cy),
+            n(attrs.rx),
+            n(attrs.ry),
+            0,
+            0,
+            Math.PI * 2,
+          );
+          ctx.stroke();
+          break;
+        case "rect": {
+          const rx = n(attrs.rx);
+          if (rx && "roundRect" in ctx) {
+            ctx.roundRect(
+              n(attrs.x),
+              n(attrs.y),
+              n(attrs.width),
+              n(attrs.height),
+              rx,
+            );
+          } else {
+            ctx.rect(n(attrs.x), n(attrs.y), n(attrs.width), n(attrs.height));
+          }
+          ctx.stroke();
+          break;
+        }
+        case "polyline":
+        case "polygon": {
+          const pts = points(attrs.points);
+          if (!pts.length) break;
+          ctx.moveTo(pts[0][0], pts[0][1]);
+          for (const point of pts.slice(1)) ctx.lineTo(point[0], point[1]);
+          if (tag === "polygon") ctx.closePath();
+          ctx.stroke();
+          break;
+        }
+      }
+    }
+    ctx.restore();
   }
 
   function fullSize(ctx: CanvasContext, lines: string[], sz: number) {
@@ -365,7 +492,13 @@
       var x = (label_width - line_wd) / 2 + m.left;
       y += i ? font_sz.line_hg : m.ascent;
 
-      renderLine(ctx, lines[i], sz, (str) => {
+      renderLine(ctx, lines[i], sz, (str, lucideIcon, iconSize = sz) => {
+        if (lucideIcon) {
+          drawLucideIcon(ctx, lucideIcon, x, y, iconSize);
+          x += iconSize;
+          return;
+        }
+
         const m = ctx.measureText(str);
         ctx.fillText(str, x, y);
         x += m.width;
@@ -677,6 +810,7 @@
           show_emoji = !show_emoji;
           if (show_emoji) show_font_awesome = false;
           if (show_emoji) show_material_icons = false;
+          if (show_emoji) show_lucide_icons = false;
         }}
       >
       </button>
@@ -688,6 +822,7 @@
           show_font_awesome = !show_font_awesome;
           if (show_font_awesome) show_emoji = false;
           if (show_font_awesome) show_material_icons = false;
+          if (show_font_awesome) show_lucide_icons = false;
         }}
       >
       </button>
@@ -699,6 +834,19 @@
           show_material_icons = !show_material_icons;
           if (show_material_icons) show_emoji = false;
           if (show_material_icons) show_font_awesome = false;
+          if (show_material_icons) show_lucide_icons = false;
+        }}
+      >
+      </button>
+      <button
+        class="lucide-icons"
+        aria-pressed={show_lucide_icons}
+        aria-label="Show Lucide Icon Selector"
+        onclick={() => {
+          show_lucide_icons = !show_lucide_icons;
+          if (show_lucide_icons) show_emoji = false;
+          if (show_lucide_icons) show_font_awesome = false;
+          if (show_lucide_icons) show_material_icons = false;
         }}
       >
       </button>
@@ -711,6 +859,9 @@
     {/if}
     {#if show_material_icons}
       <MaterialIcons onselect={(token: string) => insertText(`{mi:${token}}`)} />
+    {/if}
+    {#if show_lucide_icons}
+      <LucideIcons onselect={(token: string) => insertText(`{lu:${token}}`)} />
     {/if}
     <textarea
       bind:this={textarea}
@@ -952,6 +1103,10 @@
   }
   .material-icons {
     background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Ctext x='12' y='16' text-anchor='middle' font-family='sans-serif' font-size='11' font-weight='700' fill='black'%3EMI%3C/text%3E%3C/svg%3E")
+      no-repeat;
+  }
+  .lucide-icons {
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Ctext x='12' y='16' text-anchor='middle' font-family='sans-serif' font-size='11' font-weight='700' fill='black'%3ELU%3C/text%3E%3C/svg%3E")
       no-repeat;
   }
   .fnt-small {
