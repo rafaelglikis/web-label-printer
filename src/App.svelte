@@ -1,6 +1,21 @@
 <script lang="ts">
   import { onMount, settled, tick } from "svelte";
   import Emoji from "./lib/Emoji.svelte";
+  import FontAwesome from "./lib/FontAwesome.svelte";
+  import { fontAwesomeIconMap } from "./lib/font-awesome-icons";
+
+  const fontAwesomeSolidFontUrl = new URL(
+    "@fortawesome/fontawesome-free/webfonts/fa-solid-900.woff2",
+    import.meta.url,
+  ).href;
+  const fontAwesomeRegularFontUrl = new URL(
+    "@fortawesome/fontawesome-free/webfonts/fa-regular-400.woff2",
+    import.meta.url,
+  ).href;
+  const fontAwesomeBrandsFontUrl = new URL(
+    "@fortawesome/fontawesome-free/webfonts/fa-brands-400.woff2",
+    import.meta.url,
+  ).href;
 
   type CanvasContext =
     | CanvasRenderingContext2D
@@ -27,6 +42,7 @@
   let margin_y = $derived(Math.round(margin_height_mm * 8));
   let text = $state(sessionStorage.getItem("text") || "");
   let show_emoji = $state(false);
+  let show_font_awesome = $state(false);
   let textarea: HTMLTextAreaElement | undefined = $state();
 
   // Font size settings (loaded from localStorage)
@@ -64,14 +80,22 @@
     size: number,
     render_fn: (str: string) => void,
   ) {
+    type ParsedTag = {
+      pos: number;
+      type: string;
+      end?: number;
+      icon?: string;
+    };
+
     // Split line into components:
     const match_bold = /(?<!\*)\*(?! )([^*]*?[^* ]\*)/g;
     const match_italic = /(?<!_)_(?! )([^_]*?[^_ ]_)/g;
     const match_barcode = /\[\|.*?\|\]/g;
+    const match_font_awesome = /\{fa:(?:(?:solid|regular|brands):)?[a-z0-9-]+\}/g;
     const match_big = /\^\^.*?\^\^/g;
     const match_small = /__.*?__/g;
 
-    const parsed = [];
+    const parsed: ParsedTag[] = [];
 
     // Start by matching "barcode" tags to avoid matching inside
     var clean_line = line;
@@ -81,6 +105,21 @@
       const end = m.index + m[0].length;
       parsed.push({ pos: start, type: "barcode" });
       parsed.push({ pos: end - 2, type: "barcode end" });
+      clean_line =
+        clean_line.substring(0, start) +
+        "\n".repeat(m[0].length) +
+        clean_line.substring(end);
+    }
+
+    for (const m of clean_line.matchAll(match_font_awesome)) {
+      const start = m.index;
+      const end = start + m[0].length;
+      parsed.push({
+        pos: start,
+        type: "font awesome",
+        end,
+        icon: m[0].slice(4, -1),
+      });
       clean_line =
         clean_line.substring(0, start) +
         "\n".repeat(m[0].length) +
@@ -169,6 +208,18 @@
           if (s) current_font = s;
           pos = tag.pos + 2;
           break;
+        case "font awesome": {
+          const icon = tag.icon ? fontAwesomeIconMap.get(tag.icon) : undefined;
+          if (icon) {
+            ctx.font = `${icon.fontWeight} ${current_font.size}px "${icon.fontFamily}"`;
+            render_fn(icon.unicode);
+          } else if (tag.end !== undefined) {
+            ctx.font = make_font(current_font);
+            render_fn(line.substring(tag.pos, tag.end));
+          }
+          pos = tag.end ?? tag.pos;
+          break;
+        }
       }
     }
   }
@@ -405,13 +456,30 @@
   });
 
   onMount(() => {
-    // Force loading of font at start, so we don't need to include in the HTML
-    const barcode_font = new FontFace(
-      "Libre Barcode 39",
-      "url('fonts/LibreBarcode39Text-Regular.ttf')",
-    );
-    document.fonts.add(barcode_font);
-    barcode_font.load().then(() => {
+    // Force loading of fonts at start, so the canvas renderer can measure them.
+    const fonts = [
+      new FontFace(
+        "Libre Barcode 39",
+        "url('fonts/LibreBarcode39Text-Regular.ttf')",
+      ),
+      new FontFace(
+        "Font Awesome 7 Free",
+        `url("${fontAwesomeSolidFontUrl}")`,
+        { weight: "900" },
+      ),
+      new FontFace(
+        "Font Awesome 7 Free",
+        `url("${fontAwesomeRegularFontUrl}")`,
+        { weight: "400" },
+      ),
+      new FontFace(
+        "Font Awesome 7 Brands",
+        `url("${fontAwesomeBrandsFontUrl}")`,
+        { weight: "400" },
+      ),
+    ];
+    for (const font of fonts) document.fonts.add(font);
+    Promise.all(fonts.map((font) => font.load())).then(() => {
       draw();
     });
   });
@@ -539,12 +607,26 @@
         aria-label="Show Emoji Selector"
         onclick={() => {
           show_emoji = !show_emoji;
+          if (show_emoji) show_font_awesome = false;
+        }}
+      >
+      </button>
+      <button
+        class="font-awesome"
+        aria-pressed={show_font_awesome}
+        aria-label="Show Font Awesome Icon Selector"
+        onclick={() => {
+          show_font_awesome = !show_font_awesome;
+          if (show_font_awesome) show_emoji = false;
         }}
       >
       </button>
     </div>
     {#if show_emoji}
       <Emoji onselect={insertText} />
+    {/if}
+    {#if show_font_awesome}
+      <FontAwesome onselect={(token: string) => insertText(`{fa:${token}}`)} />
     {/if}
     <textarea
       bind:this={textarea}
@@ -778,6 +860,10 @@
   }
   .barcode {
     background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIGNsYXNzPSJsdWNpZGUgbHVjaWRlLWJhcmNvZGUtaWNvbiBsdWNpZGUtYmFyY29kZSI+PHBhdGggZD0iTTMgNXYxNCIvPjxwYXRoIGQ9Ik04IDV2MTQiLz48cGF0aCBkPSJNMTIgNXYxNCIvPjxwYXRoIGQ9Ik0xNyA1djE0Ii8+PHBhdGggZD0iTTIxIDV2MTQiLz48L3N2Zz4=")
+      no-repeat;
+  }
+  .font-awesome {
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Ctext x='12' y='16' text-anchor='middle' font-family='sans-serif' font-size='11' font-weight='700' fill='black'%3EFA%3C/text%3E%3C/svg%3E")
       no-repeat;
   }
   .fnt-small {
