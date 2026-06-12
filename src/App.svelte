@@ -7,6 +7,8 @@
   import { lucideIconMap, type LucideIcon } from "./lib/lucide-icons";
   import MaterialIcons from "./lib/MaterialIcons.svelte";
   import { materialIconMap } from "./lib/material-icons";
+  import RemixIcons from "./lib/RemixIcons.svelte";
+  import { remixIconMap } from "./lib/remix-icons";
 
   const fontAwesomeSolidFontUrl = new URL(
     "@fortawesome/fontawesome-free/webfonts/fa-solid-900.woff2",
@@ -40,6 +42,10 @@
     "@material-design-icons/font/material-icons-two-tone.woff2",
     import.meta.url,
   ).href;
+  const remixIconFontUrl = new URL(
+    "remixicon/fonts/remixicon.woff2",
+    import.meta.url,
+  ).href;
 
   type CanvasContext =
     | CanvasRenderingContext2D
@@ -69,6 +75,7 @@
   let show_font_awesome = $state(false);
   let show_material_icons = $state(false);
   let show_lucide_icons = $state(false);
+  let show_remix_icons = $state(false);
   let textarea: HTMLTextAreaElement | undefined = $state();
 
   // Font size settings (loaded from localStorage)
@@ -104,7 +111,11 @@
     ctx: CanvasContext,
     line: string,
     size: number,
-    render_fn: (str: string, lucideIcon?: LucideIcon, size?: number) => void,
+    render_fn: (
+      str: string,
+      vectorIcon?: LucideIcon,
+      size?: number,
+    ) => void,
   ) {
     type ParsedTag = {
       pos: number;
@@ -120,6 +131,7 @@
     const match_font_awesome = /\{fa:(?:(?:solid|regular|brands):)?[a-z0-9-]+\}/g;
     const match_material_icons = /\{mi:(?:(?:filled|outlined|round|sharp|two-tone):)?[a-z0-9_]+\}/g;
     const match_lucide_icons = /\{lu:[a-z0-9-]+\}/g;
+    const match_remix_icons = /\{ri:[a-z0-9-]+\}/g;
     const match_big = /\^\^.*?\^\^/g;
     const match_small = /__.*?__/g;
 
@@ -175,6 +187,21 @@
       parsed.push({
         pos: start,
         type: "lucide icon",
+        end,
+        icon: m[0].slice(4, -1),
+      });
+      clean_line =
+        clean_line.substring(0, start) +
+        "\n".repeat(m[0].length) +
+        clean_line.substring(end);
+    }
+
+    for (const m of clean_line.matchAll(match_remix_icons)) {
+      const start = m.index;
+      const end = start + m[0].length;
+      parsed.push({
+        pos: start,
+        type: "remix icon",
         end,
         icon: m[0].slice(4, -1),
       });
@@ -301,6 +328,18 @@
           pos = tag.end ?? tag.pos;
           break;
         }
+        case "remix icon": {
+          const icon = tag.icon ? remixIconMap.get(tag.icon) : undefined;
+          if (icon) {
+            ctx.font = `${current_font.size}px "remixicon"`;
+            render_fn(icon.unicode);
+          } else if (tag.end !== undefined) {
+            ctx.font = make_font(current_font);
+            render_fn(line.substring(tag.pos, tag.end));
+          }
+          pos = tag.end ?? tag.pos;
+          break;
+        }
       }
     }
   }
@@ -316,8 +355,8 @@
     var ascent = 0;
     var descent = 0;
     let lastRightAdjustment = 0;
-    renderLine(ctx, line, size, (str, lucideIcon, iconSize = size) => {
-      if (lucideIcon) {
+    renderLine(ctx, line, size, (str, vectorIcon, iconSize = size) => {
+      if (vectorIcon) {
         if (first) {
           ascent = iconSize;
           descent = 0;
@@ -350,7 +389,7 @@
     return { right, left, ascent, descent };
   }
 
-  function drawLucideIcon(
+  function drawVectorIcon(
     ctx: CanvasContext,
     icon: LucideIcon,
     x: number,
@@ -492,9 +531,9 @@
       var x = (label_width - line_wd) / 2 + m.left;
       y += i ? font_sz.line_hg : m.ascent;
 
-      renderLine(ctx, lines[i], sz, (str, lucideIcon, iconSize = sz) => {
-        if (lucideIcon) {
-          drawLucideIcon(ctx, lucideIcon, x, y, iconSize);
+      renderLine(ctx, lines[i], sz, (str, vectorIcon, iconSize = sz) => {
+        if (vectorIcon) {
+          drawVectorIcon(ctx, vectorIcon, x, y, iconSize);
           x += iconSize;
           return;
         }
@@ -678,6 +717,7 @@
         "Material Icons Two Tone",
         `url("${materialIconsTwoToneFontUrl}")`,
       ),
+      new FontFace("remixicon", `url("${remixIconFontUrl}")`),
     ];
     for (const font of fonts) document.fonts.add(font);
     Promise.all(fonts.map((font) => font.load())).then(() => {
@@ -811,6 +851,7 @@
           if (show_emoji) show_font_awesome = false;
           if (show_emoji) show_material_icons = false;
           if (show_emoji) show_lucide_icons = false;
+          if (show_emoji) show_remix_icons = false;
         }}
       >
       </button>
@@ -823,6 +864,7 @@
           if (show_font_awesome) show_emoji = false;
           if (show_font_awesome) show_material_icons = false;
           if (show_font_awesome) show_lucide_icons = false;
+          if (show_font_awesome) show_remix_icons = false;
         }}
       >
       </button>
@@ -835,6 +877,7 @@
           if (show_material_icons) show_emoji = false;
           if (show_material_icons) show_font_awesome = false;
           if (show_material_icons) show_lucide_icons = false;
+          if (show_material_icons) show_remix_icons = false;
         }}
       >
       </button>
@@ -847,6 +890,20 @@
           if (show_lucide_icons) show_emoji = false;
           if (show_lucide_icons) show_font_awesome = false;
           if (show_lucide_icons) show_material_icons = false;
+          if (show_lucide_icons) show_remix_icons = false;
+        }}
+      >
+      </button>
+      <button
+        class="remix-icons"
+        aria-pressed={show_remix_icons}
+        aria-label="Show Remix Icon Selector"
+        onclick={() => {
+          show_remix_icons = !show_remix_icons;
+          if (show_remix_icons) show_emoji = false;
+          if (show_remix_icons) show_font_awesome = false;
+          if (show_remix_icons) show_material_icons = false;
+          if (show_remix_icons) show_lucide_icons = false;
         }}
       >
       </button>
@@ -862,6 +919,9 @@
     {/if}
     {#if show_lucide_icons}
       <LucideIcons onselect={(token: string) => insertText(`{lu:${token}}`)} />
+    {/if}
+    {#if show_remix_icons}
+      <RemixIcons onselect={(token: string) => insertText(`{ri:${token}}`)} />
     {/if}
     <textarea
       bind:this={textarea}
@@ -1107,6 +1167,10 @@
   }
   .lucide-icons {
     background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Ctext x='12' y='16' text-anchor='middle' font-family='sans-serif' font-size='11' font-weight='700' fill='black'%3ELU%3C/text%3E%3C/svg%3E")
+      no-repeat;
+  }
+  .remix-icons {
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Ctext x='12' y='16' text-anchor='middle' font-family='sans-serif' font-size='11' font-weight='700' fill='black'%3ERI%3C/text%3E%3C/svg%3E")
       no-repeat;
   }
   .fnt-small {

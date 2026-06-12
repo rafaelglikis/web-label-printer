@@ -26,6 +26,7 @@
     "@material-design-icons/font": "^0.14.15",
     "@material-design-icons/svg": "^0.14.15",
     "@types/web-bluetooth": "^0.0.21",
-    "lucide": "^1.18.0"
+    "lucide": "^1.18.0",
+    "remixicon": "^4.9.1"
   }
 }

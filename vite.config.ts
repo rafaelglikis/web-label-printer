@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { defineConfig, type Plugin } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
@@ -24,6 +24,7 @@ type LucideIconNode = [string, Record<string, string | number | undefined>][]
 const fontAwesomeIconModuleId = 'virtual:font-awesome-icons'
 const materialIconModuleId = 'virtual:material-icons'
 const lucideIconModuleId = 'virtual:lucide-icons'
+const remixIconModuleId = 'virtual:remix-icons'
 
 function fontAwesomeIconData(): Plugin {
   return {
@@ -157,8 +158,73 @@ function lucideIconData(): Plugin {
   }
 }
 
+function remixIconData(): Plugin {
+  return {
+    name: 'remix-icon-data',
+    resolveId(id) {
+      if (id === remixIconModuleId) return id
+    },
+    load(id) {
+      if (id !== remixIconModuleId) return
+
+      const iconsPath = fileURLToPath(
+        new URL('./node_modules/remixicon/icons/', import.meta.url),
+      )
+      const cssPath = fileURLToPath(
+        new URL('./node_modules/remixicon/fonts/remixicon.css', import.meta.url),
+      )
+      const unicodeByName = new Map(
+        [...readFileSync(cssPath, 'utf8').matchAll(/\.ri-([^:]+):before\s*\{\s*content:\s*"\\([a-f0-9]+)";\s*\}/g)].map(
+          (match) => [match[1], String.fromCodePoint(parseInt(match[2], 16))],
+        ),
+      )
+      const files = (dir: string): string[] =>
+        readdirSync(dir).flatMap((entry) => {
+          const path = `${dir}/${entry}`
+          if (statSync(path).isDirectory()) return files(path)
+          return entry.endsWith('.svg') ? [path] : []
+        })
+
+      const icons = files(iconsPath)
+        .map((path) => {
+          const file = path.split('/').at(-1) ?? ''
+          const category = path.split('/').at(-2) ?? ''
+          const name = file.slice(0, -4)
+          const style = name.endsWith('-fill') ? 'fill' : 'line'
+          const label = name
+            .replace(/-(?:fill|line)$/, '')
+            .split('-')
+            .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+            .join(' ')
+
+          return {
+            name,
+            label,
+            category,
+            style,
+            unicode: unicodeByName.get(name),
+            searchText: `${name} ${label} ${category} ${style}`.toLowerCase(),
+          }
+        })
+        .filter((icon) => icon.unicode !== undefined)
+        .sort(
+          (a, b) =>
+            a.label.localeCompare(b.label) || a.style.localeCompare(b.style),
+        )
+
+      return `export default ${JSON.stringify(icons)}`
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
   base: './',
-  plugins: [fontAwesomeIconData(), materialIconData(), lucideIconData(), svelte()],
+  plugins: [
+    fontAwesomeIconData(),
+    materialIconData(),
+    lucideIconData(),
+    remixIconData(),
+    svelte(),
+  ],
 })

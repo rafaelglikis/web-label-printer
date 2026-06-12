@@ -31,3 +31,16 @@ declare module "virtual:lucide-icons" {
 
   export default icons;
 }
+
+declare module "virtual:remix-icons" {
+  const icons: {
+    name: string;
+    label: string;
+    category: string;
+    style: "fill" | "line";
+    unicode: string;
+    searchText: string;
+  }[];
+
+  export default icons;
+}
