@@ -122,6 +122,9 @@
     { id: "ion-icons", label: "Ionicons", title: "Ionicons" },
   ];
 
+  const PRINTER_SERVICE_UUID = "0000ff00-0000-1000-8000-00805f9b34fb";
+  const PRINT_CHARACTERISTIC_UUID = "0000ff02-0000-1000-8000-00805f9b34fb";
+
   // Dimensions in mm (loaded from localStorage)
   let label_width_mm = $state(
     parseFloat(localStorage.getItem("label_width_mm") || "40"),
@@ -142,12 +145,10 @@
   let margin_x = $derived(Math.round(margin_width_mm * 8));
   let margin_y = $derived(Math.round(margin_height_mm * 8));
   let text = $state(sessionStorage.getItem("text") || "");
-  let show_asset_picker = $state(false);
   let active_asset_tab = $state<AssetTab>("emoji");
   let icon_search_query = $state("");
   let textarea: HTMLTextAreaElement | undefined = $state();
-  let asset_picker: HTMLElement | undefined = $state();
-  let asset_picker_button: HTMLButtonElement | undefined = $state();
+  let printer_device: BluetoothDevice | undefined = $state();
 
   // Font size settings (loaded from localStorage)
   let auto_font_size = $state(
@@ -935,19 +936,6 @@
   });
 
   onMount(() => {
-    function closeAssetPickerOnOutsidePointerDown(event: PointerEvent) {
-      const target = event.target;
-      if (!(target instanceof Node) || !show_asset_picker) return;
-      if (asset_picker?.contains(target)) return;
-      if (asset_picker_button?.contains(target)) return;
-      show_asset_picker = false;
-    }
-
-    document.addEventListener(
-      "pointerdown",
-      closeAssetPickerOnOutsidePointerDown,
-    );
-
     // Force loading of fonts at start, so the canvas renderer can measure them.
     const fonts = [
       new FontFace(
@@ -1000,32 +988,46 @@
     Promise.all(fonts.map((font) => font.load())).then(() => {
       draw();
     });
-
-    return () => {
-      document.removeEventListener(
-        "pointerdown",
-        closeAssetPickerOnOutsidePointerDown,
-      );
-    };
   });
 
-  async function printLabel() {
-    try {
-      const device = await navigator.bluetooth.requestDevice({
+  async function requestPrinterDevice() {
+    printer_device = await navigator.bluetooth.requestDevice({
         filters: [
-          { services: ["0000ff00-0000-1000-8000-00805f9b34fb"] },
+          { services: [PRINTER_SERVICE_UUID] },
           { services: ["00001110-0000-1000-8000-00805f9b34fb"] },
           { services: ["0000af30-0000-1000-8000-00805f9b34fb"] },
         ],
-        optionalServices: ["0000ff00-0000-1000-8000-00805f9b34fb"],
+        optionalServices: [PRINTER_SERVICE_UUID],
       });
-      const server = await device.gatt?.connect();
-      const service = await server?.getPrimaryService(
-        "0000ff00-0000-1000-8000-00805f9b34fb",
-      );
-      const characteristic = await service?.getCharacteristic(
-        "0000ff02-0000-1000-8000-00805f9b34fb",
-      );
+      return printer_device;
+  }
+
+  async function getPrintCharacteristic() {
+    const device = printer_device ?? (await requestPrinterDevice());
+    const server = device.gatt?.connected
+      ? device.gatt
+      : await device.gatt?.connect();
+    if (!server) throw new Error("Could not connect to the printer");
+
+    const service = await server.getPrimaryService(PRINTER_SERVICE_UUID);
+    return service.getCharacteristic(PRINT_CHARACTERISTIC_UUID);
+  }
+
+  async function getReusablePrintCharacteristic() {
+    const had_saved_device = Boolean(printer_device);
+    try {
+      return await getPrintCharacteristic();
+    } catch (err) {
+      if (!had_saved_device) throw err;
+      console.log(`Saved printer connection failed, choosing again: ${err}`);
+      printer_device = undefined;
+      return getPrintCharacteristic();
+    }
+  }
+
+  async function printLabel() {
+    try {
+      const characteristic = await getReusablePrintCharacteristic();
 
       // Ok, will print our data
       const bytes_height = Math.floor((label_height + 7) / 8);
@@ -1046,13 +1048,13 @@
       // ESC d 00 : Print and feed 0 lines.
       const footer = new Uint8Array([0x1b, 0x64, 0x00]);
 
-      await characteristic?.writeValueWithResponse(header);
+      await characteristic.writeValueWithResponse(header);
       for (let i = 0; i < pixelData.length; i += 128) {
         const buf = pixelData.slice(i, i + 128);
         // TODO: last packet should be padded??
-        await characteristic?.writeValueWithoutResponse(buf);
+        await characteristic.writeValueWithoutResponse(buf);
       }
-      await characteristic?.writeValueWithResponse(footer);
+      await characteristic.writeValueWithResponse(footer);
     } catch (err) {
       console.log(`Error printing: ${err}`);
     }
@@ -1093,7 +1095,7 @@
 </script>
 
 <main>
-  <h1>Web Label Printer</h1>
+  <h1>LabelForge</h1>
   <div class="r">
     <div class="bar">
       <button
@@ -1126,24 +1128,14 @@
         aria-label="Barcode"
       >
       </button>
-      <button
-        bind:this={asset_picker_button}
-        class="assets"
-        aria-pressed={show_asset_picker}
-        aria-label="Show Emoji and Icon Selector"
-        title="Emoji and icons"
-        onclick={() => {
-          show_asset_picker = !show_asset_picker;
-        }}
-      >
-      </button>
     </div>
-    {#if show_asset_picker}
-      <section
-        bind:this={asset_picker}
-        class="asset-picker"
-        aria-label="Emoji and icon picker"
-      >
+    <div class="editor">
+      <textarea
+        bind:this={textarea}
+        bind:value={text}
+        placeholder="Write text here..."
+      ></textarea>
+      <section class="asset-picker" aria-label="Emoji and icon picker">
         <div class="asset-tabs" role="tablist" aria-label="Asset type">
           {#each assetTabs as tab}
             <button
@@ -1182,12 +1174,7 @@
           <IonIcons bind:query={icon_search_query} onselect={(token: string) => insertText(`{io:${token}}`)} />
         {/if}
       </section>
-    {/if}
-    <textarea
-      bind:this={textarea}
-      bind:value={text}
-      placeholder="Write text here..."
-    ></textarea>
+    </div>
     <aside class="side-panel">
       <section class="config-panel" aria-label="Configuration">
         <h2>Configuration</h2>
@@ -1353,45 +1340,22 @@
     display: block;
   }
 
-  .r > :global(font-awesome-picker),
-  .r > :global(material-icons-picker),
-  .r > :global(lucide-icons-picker),
-  .r > :global(remix-icons-picker),
-  .r > :global(box-icons-picker),
-  .r > :global(tabler-icons-picker),
-  .r > :global(bootstrap-icons-picker),
-  .r > :global(hero-icons-picker),
-  .r > :global(phosphor-icons-picker),
-  .r > :global(ion-icons-picker),
-  .r > .asset-picker,
-  .r > textarea {
+  .r > .editor {
+    display: grid;
+    gap: 0.75rem;
     grid-column: 1;
     grid-row: 2;
-    z-index: 1;
+    justify-self: start;
+    width: min(100%, 760px);
   }
 
-  .r > :global(font-awesome-picker),
-  .r > :global(material-icons-picker),
-  .r > :global(lucide-icons-picker),
-  .r > :global(remix-icons-picker),
-  .r > :global(box-icons-picker),
-  .r > :global(tabler-icons-picker),
-  .r > :global(bootstrap-icons-picker),
-  .r > :global(hero-icons-picker),
-  .r > :global(phosphor-icons-picker),
-  .r > :global(ion-icons-picker),
-  .r > .asset-picker {
-    grid-column: 1;
-    grid-row: 2;
-    align-self: start;
+  .editor > .asset-picker {
     z-index: 18;
-    margin-top: 0.25rem;
   }
 
   .asset-picker {
     box-sizing: border-box;
-    justify-self: start;
-    width: min(100%, 760px);
+    width: 100%;
     overflow: hidden;
     border: 1px solid #dadce0;
     border-radius: 4px;
@@ -1508,6 +1472,11 @@
     transition:
       box-shadow 0.18s ease,
       background-color 0.18s ease;
+  }
+
+  .editor > textarea {
+    display: block;
+    width: 100%;
   }
 
   textarea:hover {
@@ -1790,21 +1759,10 @@
     color: #3c4043;
   }
 
-  .bar button:nth-child(6),
-  .bar button:nth-child(7) {
-    margin-left: 0.375rem;
-    box-shadow: -0.5rem 0 0 -0.45rem #dadce0;
-  }
-
   .bar button:hover {
     border-color: transparent;
     background-color: #f1f3f4;
     box-shadow: none;
-  }
-
-  .bar button[aria-pressed="true"] {
-    background-color: #e8f0fe;
-    color: #174ea6;
   }
 
   @media (max-width: 960px) {
@@ -1852,10 +1810,6 @@
   }
   .bold {
     background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIGNsYXNzPSJsdWNpZGUgbHVjaWRlLWJvbGQtaWNvbiBsdWNpZGUtYm9sZCI+PHBhdGggZD0iTTYgMTJoOWE0IDQgMCAwIDEgMCA4SDdhMSAxIDAgMCAxLTEtMVY1YTEgMSAwIDAgMSAxLTFoN2E0IDQgMCAwIDEgMCA4Ii8+PC9zdmc+")
-      no-repeat;
-  }
-  .assets {
-    background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIGNsYXNzPSJsdWNpZGUgbHVjaWRlLXNtaWxlLWljb24gbHVjaWRlLXNtaWxlIj48Y2lyY2xlIGN4PSIxMiIgY3k9IjEyIiByPSIxMCIvPjxwYXRoIGQ9Ik04IDE0czEuNSAyIDQgMiA0LTIgNC0yIi8+PGxpbmUgeDE9IjkiIHgyPSI5LjAxIiB5MT0iOSIgeTI9IjkiLz48bGluZSB4MT0iMTUiIHgyPSIxNS4wMSIgeTE9IjkiIHkyPSI5Ii8+PC9zdmc+")
       no-repeat;
   }
   .barcode {
